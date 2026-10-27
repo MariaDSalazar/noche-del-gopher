@@ -7,7 +7,7 @@
 (() => {
   'use strict';
   const D = window.REPASO, app = document.getElementById('app'), imp = document.getElementById('impresion');
-  const CLAVE = 'noche-gopher', MARCA = CLAVE + ':en-curso', CERT = CLAVE + ':certificado';
+  const CLAVE = 'noche-gopher', MARCA = CLAVE + ':en-curso', CERT = CLAVE + ':certificado', PROG = CLAVE + ':progreso';
   const $ = s => document.querySelector(s);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -16,6 +16,26 @@
   let M = null, E = estadoNuevo(), S = null, ocupado = false, wake = null, cert = null, canal = null;
 
   function estadoNuevo(nombre = '', apellido = '') { return { nombre, apellido, enCurso: false, salas: [null, null, null] }; }
+
+  /* las salas superadas quedan guardadas en el dispositivo, a nombre de quien las jugó: salir de la página solo
+     reinicia la sala en curso, y al volver con el mismo nombre se sigue donde quedó */
+  const clave = (n, a) => `${n} ${a}`.toLocaleLowerCase('es');
+  function leerProgreso() { try { const p = JSON.parse(localStorage.getItem(PROG) || '{}'); return p && typeof p === 'object' ? p : {}; } catch { return {}; } }
+  function guardar(borrar = false) {                          // uno por nombre: en un computador compartido cada quien conserva el suyo
+    const p = leerProgreso(), k = clave(E.nombre, E.apellido);
+    if (borrar) delete p[k]; else p[k] = E.salas.map(r => r && { primer: r.primer, fin: r.fin });
+    try { localStorage.setItem(PROG, JSON.stringify(p)); } catch { }
+  }
+  function cargar(nombre, apellido) {
+    const E2 = estadoNuevo(nombre, apellido), p = leerProgreso()[clave(nombre, apellido)];
+    if (Array.isArray(p))
+      M.salas.forEach((s, t) => {
+        const r = p[t];
+        if (r && Array.isArray(r.primer) && r.primer.length === s.n && typeof r.fin === 'string')
+          E2.salas[t] = { primer: r.primer, aciertos: r.primer.filter(Boolean).length, fin: r.fin };
+      });
+    return E2;
+  }
 
   /* ---------------- arte (SVG, sin emojis) ---------------- */
   /* el gopher (dibujo propio, el mismo de los juegos anteriores) con sombrero de bruja */
@@ -78,10 +98,10 @@
   async function pedirPantalla() { try { wake = await navigator.wakeLock?.request('screen'); } catch { wake = null; } }
   function soltarPantalla() { try { wake?.release(); } catch { } wake = null; }
   function marcar(estado) {
-    if (estado) sessionStorage.setItem(MARCA, JSON.stringify({ estado, nombre: E.nombre, apellido: E.apellido }));
+    if (estado) sessionStorage.setItem(MARCA, JSON.stringify({ estado, nombre: E.nombre, apellido: E.apellido, sala: S ? M.salas[S.t].sala : '' }));
     else sessionStorage.removeItem(MARCA);
   }
-  const avisoGuardia = () => `<p class="guardia">${ART.candado}<span>No abra otras pestañas ni cambie de aplicación hasta terminar: si sale de esta página, el juego se bloquea y se reinicia desde el principio.</span></p>`;
+  const avisoGuardia = () => `<p class="guardia">${ART.candado}<span>No abra otras pestañas ni cambie de aplicación hasta terminar: si sale de esta página, la sala que esté jugando se reinicia desde la primera pregunta. Las salas que ya superó quedan guardadas.</span></p>`;
 
   /* ---------------- guardia: no salir de la página mientras el juego está en curso ---------------- */
   function vigilar() {
@@ -99,18 +119,23 @@
   }
   function violar() {
     if (!E.enCurso) return;
-    E = estadoNuevo(E.nombre, E.apellido); S = null; ocupado = false;
-    marcar('bloqueado'); soltarPantalla();
-    salon(); bloqueo();
+    const sala = S ? M.salas[S.t].sala : '';
+    marcar('bloqueado');                                      // antes de soltar S: si está recargando, anota qué sala perdió
+    E.enCurso = false; S = null; ocupado = false;               // solo se pierde la sala en curso
+    soltarPantalla();
+    salon(); bloqueo(sala);
   }
-  function bloqueo() {
+  function bloqueo(sala) {
     $('.bloqueo')?.remove();
+    const hechas = E.salas.filter(Boolean).length;
+    const perdio = sala ? `La sala «${esc(sala)}» se reinició: vuelve a empezar desde la primera pregunta.` : 'No estaba dentro de ninguna sala, así que no perdió avance.';
+    const guardadas = !hechas ? '' : hechas === 1 ? ' Su sala superada sigue guardada.' : ` Sus ${hechas} salas superadas siguen guardadas.`;
     const d = document.createElement('div');
     d.className = 'bloqueo'; d.setAttribute('role', 'alertdialog'); d.setAttribute('aria-modal', 'true'); d.setAttribute('aria-labelledby', 'bq-t');
     d.innerHTML = `<div class="caja">${ART.gopher('enojado')}<p class="rotulo">${ART.candado} Juego bloqueado</p>
       <h2 id="bq-t">Usted salió de la página durante la ejecución del juego.</h2>
-      <p>Abrir otra pestaña, cambiar de aplicación, abrir otra ventana o recargar la página bloquea el juego. Por eso se reinició desde el principio.</p>
-      <button class="btn" id="reiniciar">Empezar de nuevo</button></div>`;
+      <p>Abrir otra pestaña, cambiar de aplicación, abrir otra ventana o recargar la página bloquea el juego. ${perdio}${guardadas}</p>
+      <button class="btn" id="reiniciar">Volver al salón</button></div>`;
     document.body.append(d);
     d.querySelector('#reiniciar').onclick = () => {
       d.remove();
@@ -132,13 +157,14 @@
         <li>${ART.calabaza(true)}<span>Cada sala trae ${rango()} preguntas de opción múltiple, verdadero o falso y selección múltiple.</span></li>
         <li>${ART.calabaza(true)}<span>Si falla, vuelve a intentarlo. Solo cuenta como acierto lo que resuelve al primer intento.</span></li>
         <li>${ART.calabaza(true)}<span>Al superar las tres salas obtiene su certificado, para imprimir o descargar en PDF.</span></li>
-        <li class="alerta">${ART.candado}<span>No puede salir de la página mientras juega: si abre otra pestaña, cambia de aplicación o recarga, el juego se bloquea y se reinicia.</span></li>
+        <li class="alerta">${ART.candado}<span>No puede salir de la página mientras juega: si abre otra pestaña, cambia de aplicación o recarga, la sala que esté jugando se reinicia. Las salas que ya superó quedan guardadas.</span></li>
       </ul>
       <form id="registro" class="tarjeta registro" autocomplete="off" novalidate>
         <h2>¿Quién se atreve a entrar?</h2>
         <label>Nombres<input id="nombre" maxlength="40" value="${esc(E.nombre)}" autocomplete="given-name"></label>
         <label>Apellidos<input id="apellido" maxlength="40" value="${esc(E.apellido)}" autocomplete="family-name"></label>
-        <p class="nota" id="nota">Su nombre aparecerá en el certificado: escríbalo completo y con tildes.</p>
+        <p class="nota" id="nota">Su nombre aparecerá en el certificado: escríbalo completo y con tildes.${Object.keys(leerProgreso()).length
+          ? ' Si ya superó salas en este dispositivo, escriba el mismo nombre y seguirá donde quedó.' : ''}</p>
         <button class="btn" type="submit">Empezar el juego</button>
       </form>
       ${previo ? '<button class="btn-link" id="ver-cert">Ver mi último certificado</button>' : ''}
@@ -148,7 +174,7 @@
       const limpio = s => s.replace(/\s+/g, ' ').trim();
       const n = limpio($('#nombre').value), a = limpio($('#apellido').value);
       if (n.length < 2 || a.length < 2) { $('#nota').textContent = 'Escriba sus nombres y sus apellidos para continuar.'; $('#nota').classList.add('error'); return; }
-      E = estadoNuevo(n, a); E.enCurso = true; marcar('en-curso'); pedirPantalla(); salon();
+      E = cargar(n, a); E.enCurso = true; marcar('en-curso'); pedirPantalla(); salon();
     };
     if (previo) $('#ver-cert').onclick = () => verCertificado(previo, false);
   }
@@ -178,6 +204,7 @@
     const K = await Cifra.huella(D.sal, 'sala', t);
     if (!E.enCurso) return;                                   // se bloqueó mientras se abría
     S = { t, i: 0, K, primer: [] };
+    marcar('en-curso');                                       // si recarga, el aviso dice qué sala se reinició
     pregunta();
   }
   async function pregunta() {
@@ -196,7 +223,7 @@
         <div class="opciones ${pub.tipo}" role="group" aria-label="Opciones">${S.orden.map((o, k) => `<button class="op" data-id="${o.id}" aria-pressed="false">
           <span class="letra">${pub.tipo === 'vf' ? (k ? 'F' : 'V') : 'ABCDE'[k]}</span><span class="t">${fmt(o.t)}</span></button>`).join('')}</div>
         <div id="fb" class="fb" aria-live="assertive"></div>
-        <div class="acciones"><button class="btn" id="comprobar" disabled>Comprobar</button></div>
+        <div class="acciones"><button class="btn" id="comprobar">Comprobar</button></div>
       </article>
       <div class="guia">${ART.gopher('pensando')}</div>
     </section>`);
@@ -209,13 +236,23 @@
     if (S.pub.tipo === 'sm') { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); }
     else S.sel = new Set([id]);
     app.querySelectorAll('.op').forEach(o => o.setAttribute('aria-pressed', S.sel.has(o.dataset.id)));
-    const canon = [...S.sel].sort().join(',');
-    $('#comprobar').disabled = (S.pub.tipo === 'sm' ? S.sel.size !== S.pub.n : !S.sel.size) || S.probado.has(canon);
+    if ($('#fb').classList.contains('aviso')) { $('#fb').className = 'fb'; $('#fb').innerHTML = ''; }
+  }
+  /* Comprobar nunca queda desactivado: si la selección no se puede calificar, dice por qué y no cuenta como intento */
+  function avisar(texto) {
+    const fb = $('#fb');
+    fb.className = 'fb aviso'; fb.innerHTML = `<p>${texto}</p>`;
+    fb.classList.remove('sacude'); void fb.offsetWidth; fb.classList.add('sacude');
   }
   async function comprobar() {
     if (S.resuelta || ocupado) return;
+    const canon = [...S.sel].sort().join(',');
+    if (!S.sel.size) return avisar(S.pub.tipo === 'sm' ? `Marque ${S.pub.n} opciones antes de comprobar.` : 'Elija una opción antes de comprobar.');
+    if (S.pub.tipo === 'sm' && S.sel.size !== S.pub.n)
+      return avisar(`Marque exactamente ${S.pub.n} opciones: ahora tiene ${S.sel.size} marcada${S.sel.size === 1 ? '' : 's'}.`);
+    if (S.probado.has(canon)) return avisar('Ya probó esa combinación y no es la respuesta. Cambie al menos una opción y vuelva a comprobar.');
     ocupado = true; $('#comprobar').disabled = true;
-    const esta = S, canon = [...S.sel].sort().join(',');
+    const esta = S;
     let fin = null;
     try { fin = await Cifra.abrir(await Cifra.llave(S.K, 'fin', S.t, S.i, canon), D.salas[S.t][S.i].x); } catch { fin = null; }
     ocupado = false;
@@ -229,9 +266,10 @@
       b.classList.add('descartada'); b.disabled = true; b.setAttribute('aria-pressed', 'false'); S.sel.clear();
     }
     $('.guia').innerHTML = ART.gopher('asustado');
+    $('#comprobar').disabled = false;
     const fb = $('#fb');
     fb.className = 'fb mal'; fb.innerHTML = `<h3>No es la respuesta</h3><p>${S.pub.tipo === 'sm'
-      ? 'Al menos una de las opciones que marcó no es correcta, o falta alguna. Revise y vuelva a intentarlo.'
+      ? 'Al menos una de las opciones que marcó no es correcta. Cambie la que no corresponde y vuelva a comprobar.'
       : 'Esa opción quedó descartada. Revise la pregunta y vuelva a intentarlo.'}</p>`;
     fb.classList.remove('sacude'); void fb.offsetWidth; fb.classList.add('sacude');
   }
@@ -252,7 +290,9 @@
     const s = M.salas[S.t], aciertos = S.primer.filter(Boolean).length;
     E.salas[S.t] = { aciertos, primer: S.primer, fin: S.K };
     const todas = E.salas.every(Boolean);
-    S = null;
+    S = null; guardar();
+    if (todas) { E.enCurso = false; marcar(null); soltarPantalla(); }   // terminó: ya no hay sala que perder
+    else marcar('en-curso');
     pantalla(`<section class="fin-sala c-${s.color}">
       <div class="guia-grande">${ART.gopher('feliz')}</div>
       <h1>¡Sala superada!</h1>
@@ -273,6 +313,7 @@
     const h = await Cifra.huella(CLAVE, ...E.salas.map(r => r.fin), E.nombre, E.apellido, fecha, aciertos.join('-'));
     const C = { nombre: E.nombre, apellido: E.apellido, fecha, aciertos, codigo: h.slice(0, 10).toUpperCase().replace(/(.{5})/, '$1-') };
     try { localStorage.setItem(CERT, JSON.stringify(C)); } catch { }
+    guardar(true);                                            // terminado: si vuelve a jugar, empieza de cero
     verCertificado(C, true);
   }
   async function verCertificado(C, recien) {
@@ -427,9 +468,9 @@
     catch { app.innerHTML = '<p class="cargando">No se pudo abrir el juego en este navegador. Use Chrome, Edge, Firefox o Safari actualizados.</p>'; return; }
     vigilar();
     const antes = JSON.parse(sessionStorage.getItem(MARCA) || 'null');
-    if (antes) { E = estadoNuevo(antes.nombre, antes.apellido); marcar(null); }
+    if (antes) { E = cargar(antes.nombre, antes.apellido); marcar(null); }
     portada();
-    if (antes) bloqueo();                                     // recargó o salió con el juego en curso
+    if (antes) bloqueo(antes.sala);                           // recargó o salió con el juego en curso
   }
   window.__rp = {                                             // para la prueba automática: no expone respuestas
     estado: () => ({ enCurso: E.enCurso, salas: E.salas.map(r => r && r.aciertos) }),

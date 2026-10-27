@@ -131,6 +131,7 @@ h1, h2, h3 { line-height: 1.2; }
 .fb.bien h3 { color: var(--verde); }
 .fb.mal { padding: 14px 16px; background: rgba(140, 30, 50, .28); border: 1px solid rgba(255, 92, 108, .5); border-left: 6px solid var(--rojo); }
 .fb.mal h3 { color: var(--rojo); }
+.fb.aviso { padding: 12px 16px; background: rgba(255, 211, 77, .12); border: 1px solid rgba(255, 211, 77, .45); border-left: 6px solid #ffd34d; color: var(--hueso); }
 .fb .intento { color: var(--tenue); font-size: .9rem; }
 .fb .pq { line-height: 1.55; }
 .sacude { animation: sacude .4s; }
