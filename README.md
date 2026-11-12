@@ -14,4 +14,4 @@ Las preguntas, las opciones y las explicaciones viajan cifradas: cada pregunta s
 
 ## Cómo se corre
 
-Es una página estática: abra `index.html` desde cualquier servidor de archivos (por ejemplo, GitHub Pages) en un navegador actualizado.
+Se juega en https://mariadsalazar.github.io/noche-del-gopher/. Es una página estática: también se puede abrir `index.html` desde cualquier servidor de archivos local en un navegador actualizado.
